@@ -39,3 +39,6 @@ def _connect():
 
     except Exception as e:
         raise RuntimeError(f"Database connection error: {e}")
+        def is_mock():
+    """Return True if mock mode is enabled in secrets or environment."""
+    return st.secrets.get("drive", {}).get("use_mock", False) or os.getenv("USE_MOCK", "false").lower() == "true"
