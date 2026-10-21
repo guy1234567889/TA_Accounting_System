@@ -44,3 +44,11 @@ def _connect():
 
 def is_mock():
     return st.secrets.get("drive", {}).get("use_mock", False) or os.getenv("USE_MOCK", "false").lower() == "true"
+
+def get_all_clients(fresh=False):
+    """Retrieve all clients from storage or mock data."""
+    if is_mock():
+        return []  # מחזיר רשימה ריקה במצב הדגמה להתחלה חלקית
+    
+    # כאן יבוא הלוגיקה המלאה לשליפה מהדרייב אם אינו במצב מוק
+    return []
