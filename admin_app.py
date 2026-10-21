@@ -223,6 +223,9 @@ def sidebar() -> None:
         if st.button("רענן נתונים"):
             db.get_all_clients(fresh=True)
             st.rerun()
+        if storage.drive_enabled() and st.button("בדיקת חיבור ל-Google Drive"):
+            ok, msg = storage.check_backend()
+            (st.success if ok else st.error)(msg)
         with st.expander("הוספת לקוח"):
             with st.form("add_client", clear_on_submit=True):
                 tz = st.text_input("ת״ז")
