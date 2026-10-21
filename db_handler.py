@@ -3,6 +3,10 @@ import streamlit as st
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
+class DatabaseError(Exception):
+    """Custom exception for database errors."""
+    pass
+
 def _connect():
     """Connect to Google Drive using credentials from st.secrets or environment variables."""
     try:
@@ -33,10 +37,10 @@ def _connect():
             folder_id = st.secrets.get("drive", {}).get("folder_id", "")
             return service, folder_id
 
-        raise ValueError("Missing Google Drive credentials.")
+        raise DatabaseError("Missing Google Drive credentials.")
 
     except Exception as e:
-        raise RuntimeError(f"Database connection error: {e}")
+        raise DatabaseError(f"Database connection error: {e}")
 
 def is_mock():
     return st.secrets.get("drive", {}).get("use_mock", False) or os.getenv("USE_MOCK", "false").lower() == "true"
