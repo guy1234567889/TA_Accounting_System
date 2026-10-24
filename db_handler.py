@@ -66,3 +66,14 @@ def normalize_id(id_str):
         return cleaned.zfill(9)
         
     return cleaned
+    def is_valid_israeli_id(id_str):
+    """בודק אם תעודת הזהות תקינה לפי אלגוריתם ספרת ביקורת."""
+    if not id_str or not isinstance(id_str, str) or not id_str.isdigit() or len(id_str) != 9:
+        return False
+        
+    total = 0
+    for i in range(9):
+        val = int(id_str[i]) * (1 if i % 2 == 0 else 2)
+        total += val if val < 10 else (val % 10 + 1)
+        
+    return total % 10 == 0
