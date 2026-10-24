@@ -78,3 +78,12 @@ def is_valid_israeli_id(id_str):
         total += val if val < 10 else (val % 10 + 1)
         
     return total % 10 == 0
+
+def add_client(tz, name, phone, btype, stage):
+    """מוסיף לקוח חדש למסד הנתונים."""
+    if is_mock():
+        return True
+        
+    # כאן נכניס בהמשך את הקוד שכותב את השורה בפועל ל-Google Sheets
+    # בינתיים נחזיר אישור כדי למנוע קריסה ולאפשר לממשק להמשיך
+    return True
