@@ -52,3 +52,16 @@ def get_all_clients(fresh=False):
     
     # כאן יבוא הלוגיקה המלאה לשליפה מהדרייב אם אינו במצב מוק
     return []
+    def normalize_id(id_str):
+    """מנרמל תעודת זהות: מסיר תווים מיותרים ומשלים ל-9 ספרות עם אפסים מובילים."""
+    if not id_str:
+        return ""
+    
+    # המרה למחרוזת והסרת רווחים או מקפים
+    cleaned = str(id_str).strip().replace("-", "").replace(" ", "")
+    
+    # אם מדובר במספר באורך של עד 9 ספרות, הוסף אפסים מובילים
+    if cleaned.isdigit() and len(cleaned) <= 9:
+        return cleaned.zfill(9)
+        
+    return cleaned
