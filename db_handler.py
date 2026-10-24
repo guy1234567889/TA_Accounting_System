@@ -52,7 +52,8 @@ def get_all_clients(fresh=False):
     
     # כאן יבוא הלוגיקה המלאה לשליפה מהדרייב אם אינו במצב מוק
     return []
-    def normalize_id(id_str):
+
+def normalize_id(id_str):
     """מנרמל תעודת זהות: מסיר תווים מיותרים ומשלים ל-9 ספרות עם אפסים מובילים."""
     if not id_str:
         return ""
