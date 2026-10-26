@@ -169,9 +169,27 @@ def _connect():
         raise DatabaseError(f"לא ניתן להתחבר למקור הנתונים: {e}") from e
 
 
+def _ensure_columns(ws, headers: list) -> None:
+    """Self-heal: the cached header list can predate a newly added column. Re-read the sheet's
+    header row, add whatever is still missing, and refresh the cached list in place."""
+    if all(c in headers for c in C.COLUMNS):
+        return
+    try:
+        current = ws.row_values(1)
+        missing = [c for c in C.COLUMNS if c not in current]
+        if missing:
+            ws.update(range_name=gspread.utils.rowcol_to_a1(1, len(current) + 1),
+                      values=[missing], value_input_option="RAW")
+            current = current + missing
+    except (gspread.exceptions.APIError, OSError) as e:
+        raise DatabaseError(f"לא ניתן לעדכן את עמודות הגיליון: {e}") from e
+    headers[:] = current
+
+
 @st.cache_data(ttl=15, show_spinner=False)
 def _load_rows() -> list[dict]:
     ws, headers = _connect()
+    _ensure_columns(ws, headers)
     try:
         values = ws.get_all_values()
     except (gspread.exceptions.APIError, OSError) as e:
@@ -241,6 +259,7 @@ def get_client(raw_id: str, fresh: bool = False) -> dict | None:
 def _update(client: dict, fields: dict) -> None:
     """Write several cells of one row in a single API call."""
     ws, headers = _connect()
+    _ensure_columns(ws, headers)
     fields = {**fields, C.COL_UPDATED: _now()}
     batch = [{"range": gspread.utils.rowcol_to_a1(client["_row"], headers.index(col) + 1),
               "values": [[val]]} for col, val in fields.items()]
@@ -265,6 +284,7 @@ def add_client(tz: str, name: str, phone: str, business_type: str, stage: str) -
     if get_client(tz, fresh=True):
         raise DatabaseError("כבר קיים לקוח עם תעודת זהות זו.")
     ws, headers = _connect()
+    _ensure_columns(ws, headers)
     values = {C.COL_ID: tz, C.COL_NAME: name, C.COL_PHONE: phone,
               C.COL_BTYPE: business_type, C.COL_STAGE: stage, C.COL_STATUS: C.WAITING,
               C.COL_MISSING: ", ".join(C.STAGE_DOCUMENTS.get(stage, [])),
