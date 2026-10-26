@@ -1,15 +1,15 @@
 """Shared constants: sheet columns, statuses, stages and the documents each stage needs."""
 
 # ---- Google Sheet columns (row 1). The first 7 are yours; the last 2 are added automatically.
-COL_ID = "ID (T.Z)"
-COL_NAME = "Full Name"
-COL_PHONE = "Phone"
-COL_BTYPE = "Business Type"
-COL_STAGE = "Current Stage"
-COL_STATUS = "Global Status"
-COL_MISSING = "Missing Documents"      # comma-separated list
-COL_RECEIVED = "Received Documents"    # JSON list (file paths + approval flag)
-COL_UPDATED = "Last Update"
+COL_ID = "ת״ז"
+COL_NAME = "שם מלא"
+COL_PHONE = "טלפון"
+COL_BTYPE = "סוג עסק"
+COL_STAGE = "שלב נוכחי"
+COL_STATUS = "סטטוס כללי"
+COL_MISSING = "מסמכים חסרים"      # comma-separated list
+COL_RECEIVED = "מסמכים שהתקבלו"    # JSON list (file paths + approval flag)
+COL_UPDATED = "עדכון אחרון"
 COLUMNS = [COL_ID, COL_NAME, COL_PHONE, COL_BTYPE, COL_STAGE, COL_STATUS,
            COL_MISSING, COL_RECEIVED, COL_UPDATED]
 
@@ -41,3 +41,14 @@ ALIASES = {
     "Form 106": "טופס 106", "Form 867": "טופס 867", "Receipts": "קבלות",
     "Bank statements": "דפי חשבון בנק",
 }
+
+# Legacy English sheet headers -> Hebrew. Applied once on connect (the header row is renamed in place,
+# so existing data stays attached to its columns).
+HEADER_ALIASES = {
+    "ID (T.Z)": COL_ID, "Full Name": COL_NAME, "Phone": COL_PHONE, "Business Type": COL_BTYPE,
+    "Current Stage": COL_STAGE, "Global Status": COL_STATUS, "Missing Documents": COL_MISSING,
+    "Received Documents": COL_RECEIVED, "Last Update": COL_UPDATED,
+}
+
+# Israeli mobile prefixes accepted by phone validation (edit if a new carrier prefix appears)
+MOBILE_PREFIXES = ("050", "051", "052", "053", "054", "055", "056", "058", "059")
