@@ -3,6 +3,7 @@ import json
 import os
 import re
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import gspread
 import streamlit as st
@@ -20,16 +21,14 @@ class DatabaseError(Exception):
     """Raised with a message that is safe to show to the user."""
 
 
-# ───────────────────────────── helpers ─────────────────────────────
-def normalize_id(raw: str) -> str | None:
-    """Digits only, left-padded to 9 (Sheets drops leading zeros). None if not plausible."""
-    digits = re.sub(r"\D", "", raw or "")
-    return digits.zfill(9) if 5 <= len(digits) <= 9 else None
+class ValidationError(DatabaseError):
+    """Invalid user input (ID, phone, name…). Caught wherever DatabaseError is caught."""
 
 
+# ───────────────────────────── validation ─────────────────────────────
 def is_valid_israeli_id(tz: str) -> bool:
-    """Standard Israeli ID check-digit algorithm."""
-    if not re.fullmatch(r"\d{9}", tz or ""):
+    """Standard Israeli ID check-digit algorithm (exactly 9 digits)."""
+    if not re.fullmatch(r"[0-9]{9}", tz or ""):
         return False
     total = 0
     for i, ch in enumerate(tz):
@@ -38,11 +37,58 @@ def is_valid_israeli_id(tz: str) -> bool:
     return total % 10 == 0
 
 
+def validate_id(raw: str) -> str:
+    """Return a clean 9-digit ID or raise ValidationError. Leading zeros must be typed."""
+    digits = re.sub(r"[\s\-]", "", raw or "")
+    if not re.fullmatch(r"[0-9]{9}", digits):
+        raise ValidationError("תעודת הזהות חייבת להכיל בדיוק 9 ספרות (כולל אפסים מובילים).")
+    if not is_valid_israeli_id(digits):
+        raise ValidationError("תעודת הזהות אינה תקינה (ספרת הביקורת שגויה). בדוק את המספר.")
+    return digits
+
+
+def validate_phone(raw: str) -> str:
+    """Israeli mobile: 10 digits, valid 05X prefix. Accepts spaces, dashes and +972."""
+    digits = re.sub(r"[\s\-().]", "", raw or "")
+    if digits.startswith("+972"):
+        digits = "0" + digits[4:]
+    elif digits.startswith("972") and len(digits) == 12:
+        digits = "0" + digits[3:]
+    if not re.fullmatch(r"[0-9]{10}", digits):
+        raise ValidationError("מספר הטלפון חייב להכיל 10 ספרות, למשל 0501234567.")
+    if digits[:3] not in C.MOBILE_PREFIXES:
+        raise ValidationError("קידומת הטלפון אינה חוקית. קידומות נתמכות: "
+                              + ", ".join(C.MOBILE_PREFIXES) + ".")
+    return digits
+
+
+_NAME_WORD = re.compile(r"[^\W\d_](?:[^\W\d_]|['’׳״\"\-])+")
+
+
+def validate_full_name(raw: str) -> str:
+    """At least two words (first + last name), letters only (hyphen/geresh allowed)."""
+    words = (raw or "").split()
+    if len(words) < 2:
+        raise ValidationError("יש להזין שם פרטי ושם משפחה (לפחות שתי מילים).")
+    if not all(_NAME_WORD.fullmatch(w) for w in words):
+        raise ValidationError("השם יכול להכיל אותיות בלבד (כל מילה לפחות שתי אותיות).")
+    return " ".join(words)
+
+
+def format_phone(digits: str) -> str:
+    return f"{digits[:3]}-{digits[3:]}" if re.fullmatch(r"[0-9]{10}", digits or "") else digits
+
+
+# ───────────────────────────── helpers ─────────────────────────────
+def normalize_id(raw: str) -> str | None:
+    """Lenient lookup form: digits only, left-padded to 9 (Sheets drops leading zeros)."""
+    digits = re.sub(r"\D", "", raw or "")
+    return digits.zfill(9) if 5 <= len(digits) <= 9 else None
+
+
 def _split(text: str) -> list[str]:
     return [p.strip() for p in re.split(r"[,;\n]", text or "") if p.strip()]
 
-
-from zoneinfo import ZoneInfo
 
 def _now() -> str:
     return datetime.now(ZoneInfo("Asia/Jerusalem")).strftime("%Y-%m-%d %H:%M")
@@ -68,53 +114,49 @@ def is_mock() -> bool:
         return True
     try:
         sec = st.secrets
-        return bool(sec.get("use_mock", False)
-                    or sec.get("drive", {}).get("use_mock", False))
+        return bool(sec.get("use_mock", False) or sec.get("drive", {}).get("use_mock", False))
     except Exception:                      # no secrets file at all
         return False
 
 
 @st.cache_resource(show_spinner=False)
 def _connect():
-    """Open the worksheet once per server process and make sure all columns exist.
-    Returns a real gspread worksheet, or the CSV-backed MockWorksheet in demo mode."""
+    """Open the worksheet once per server process, rename legacy English headers to Hebrew
+    and add any missing columns. Returns (worksheet, headers)."""
     try:
         if is_mock():
             ws = MockWorksheet()
         else:
-            # החלפת מנגנון האימות לשימוש ב-OAuth (ההגדרות שיצרנו ב-Secrets)
-            drive_secrets = st.secrets.get("drive", {})
-            client_id = drive_secrets.get("client_id") or os.getenv("CLIENT_ID")
-            client_secret = drive_secrets.get("client_secret") or os.getenv("CLIENT_SECRET")
-            refresh_token = drive_secrets.get("refresh_token") or os.getenv("REFRESH_TOKEN")
-            sheet_id = drive_secrets.get("spreadsheet_id") or os.getenv("SPREADSHEET_ID")
-            
+            d = st.secrets.get("drive", {})
+            client_id = d.get("client_id") or os.getenv("CLIENT_ID")
+            client_secret = d.get("client_secret") or os.getenv("CLIENT_SECRET")
+            refresh_token = d.get("refresh_token") or os.getenv("REFRESH_TOKEN")
+            sheet_id = d.get("spreadsheet_id") or os.getenv("SPREADSHEET_ID")
             if not (client_id and client_secret and refresh_token and sheet_id):
-                raise DatabaseError("Missing OAuth credentials or spreadsheet_id in secrets.")
-
-            creds = Credentials(
-                token=None,
-                refresh_token=refresh_token,
-                client_id=client_id,
-                client_secret=client_secret,
-                token_uri="https://oauth2.googleapis.com/token"
-            )
-            
+                raise DatabaseError("חסרים פרטי OAuth או spreadsheet_id ב-Secrets.")
+            creds = Credentials(token=None, refresh_token=refresh_token, client_id=client_id,
+                                client_secret=client_secret, scopes=SCOPES,
+                                token_uri="https://oauth2.googleapis.com/token")
             book = gspread.authorize(creds).open_by_key(sheet_id)
-            tab = "Clients"
+            tab = d.get("worksheet", "Clients")
             try:
                 ws = book.worksheet(tab)
             except gspread.WorksheetNotFound:
                 ws = book.add_worksheet(title=tab, rows=500, cols=len(C.COLUMNS))
-                
+
         headers = ws.row_values(1)
+        renamed = [C.HEADER_ALIASES.get(h, h) for h in headers]
+        if renamed != headers:                 # one-time in-place migration to Hebrew headers
+            ws.update(range_name="A1", values=[renamed], value_input_option="RAW")
+            headers = renamed
         missing_cols = [c for c in C.COLUMNS if c not in headers]
         if missing_cols:                       # add any missing columns at the right edge
-            start = len(headers) + 1
-            ws.update(range_name=gspread.utils.rowcol_to_a1(1, start),
+            ws.update(range_name=gspread.utils.rowcol_to_a1(1, len(headers) + 1),
                       values=[missing_cols], value_input_option="RAW")
-            headers += missing_cols
+            headers = headers + missing_cols
         return ws, headers
+    except DatabaseError:
+        raise
     except gspread.exceptions.SpreadsheetNotFound as e:
         raise DatabaseError("הגיליון לא נמצא – בדוק את המזהה ב-Secrets.") from e
     except Exception as e:
@@ -191,15 +233,13 @@ def _must_get(client_id: str) -> dict:
 
 
 def add_client(tz: str, name: str, phone: str, business_type: str, stage: str) -> dict:
-    norm = normalize_id(tz)
-    if not norm:
-        raise DatabaseError("תעודת הזהות חייבת להכיל 5–9 ספרות.")
-    if not name.strip():
-        raise DatabaseError("חובה להזין שם מלא.")
-    if get_client(norm, fresh=True):
+    tz, name, phone = validate_id(tz), validate_full_name(name), validate_phone(phone)
+    if business_type not in C.BUSINESS_TYPES or stage not in C.STAGES:
+        raise ValidationError("יש לבחור סוג עסק ושלב מהרשימה.")
+    if get_client(tz, fresh=True):
         raise DatabaseError("כבר קיים לקוח עם תעודת זהות זו.")
     ws, headers = _connect()
-    values = {C.COL_ID: norm, C.COL_NAME: name.strip(), C.COL_PHONE: phone.strip(),
+    values = {C.COL_ID: tz, C.COL_NAME: name, C.COL_PHONE: phone,
               C.COL_BTYPE: business_type, C.COL_STAGE: stage, C.COL_STATUS: C.WAITING,
               C.COL_MISSING: ", ".join(C.STAGE_DOCUMENTS.get(stage, [])),
               C.COL_RECEIVED: "[]", C.COL_UPDATED: _now()}
@@ -207,15 +247,14 @@ def add_client(tz: str, name: str, phone: str, business_type: str, stage: str) -
         ws.append_row([values.get(h, "") for h in headers], value_input_option="RAW")
     except (gspread.exceptions.APIError, OSError) as e:
         raise DatabaseError(f"לא ניתן לשמור בגיליון: {e}") from e
-    return _must_get(norm)
+    _load_rows.clear()
+    return _must_get(tz)
 
 
 def update_details(client_id: str, name: str, phone: str, business_type: str) -> None:
-    c = _must_get(client_id)
-    if not name.strip():
-        raise DatabaseError("חובה להזין שם מלא.")
-    _update(c, {C.COL_NAME: name.strip(), C.COL_PHONE: phone.strip(),
-                C.COL_BTYPE: business_type})
+    name, phone = validate_full_name(name), validate_phone(phone)
+    _update(_must_get(client_id),
+            {C.COL_NAME: name, C.COL_PHONE: phone, C.COL_BTYPE: business_type})
 
 
 def set_status(client_id: str, status: str) -> None:
@@ -247,8 +286,7 @@ def request_document(client_id: str, doc: str) -> None:
 
 
 def register_upload(client_id: str, doc: str, files: list[tuple[str, bytes]]) -> None:
-    """Client side: store the files, move doc from Missing → Received, update the status.
-    `files` is a list of (filename, bytes). Raises DatabaseError / ValueError."""
+    """Client side: store the files, move doc from Missing → Received, update the status."""
     c = _must_get(client_id)
     if doc not in c["missing"]:
         raise DatabaseError("המסמך הזה כבר אינו נדרש.")
@@ -264,6 +302,26 @@ def register_upload(client_id: str, doc: str, files: list[tuple[str, bytes]]) ->
     _update(c, fields)
 
 
+def attach_office_files(client_id: str, doc: str, files: list[tuple[str, bytes]],
+                        approve: bool = True) -> None:
+    """Accountant side: attach files to a client's record (marked source='office')."""
+    doc = re.sub(r"[,;\n]", " ", doc or "").strip()
+    if not doc:
+        raise DatabaseError("יש לבחור מסמך או להזין את שמו.")
+    if not files:
+        raise DatabaseError("יש לבחור קובץ לצירוף.")
+    c = _must_get(client_id)
+    saved = [storage.save_file(c["id"], doc, name, data) for name, data in files]
+    received = c["received"] + [{"doc": doc, "files": saved, "time": _now(),
+                                 "approved": approve, "source": "office"}]
+    missing = [m for m in c["missing"] if m != doc]
+    fields = {C.COL_RECEIVED: json.dumps(received, ensure_ascii=False),
+              C.COL_MISSING: ", ".join(missing)}
+    if not missing and c["status"] == C.WAITING:
+        fields[C.COL_STATUS] = C.REVIEW
+    _update(c, fields)
+
+
 def set_document_approval(client_id: str, doc: str, approved: bool) -> None:
     c = _must_get(client_id)
     received = c["received"]
@@ -275,7 +333,7 @@ def set_document_approval(client_id: str, doc: str, approved: bool) -> None:
 
 def reject_document(client_id: str, doc: str) -> None:
     """Send a document back: it returns to Missing and the status turns red.
-    Files stay on disk for the audit trail."""
+    Files stay in storage for the audit trail."""
     c = _must_get(client_id)
     received = [r for r in c["received"] if r["doc"] != doc]
     missing = c["missing"] if doc in c["missing"] else c["missing"] + [doc]
