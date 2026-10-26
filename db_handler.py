@@ -21,6 +21,10 @@ class DatabaseError(Exception):
     """Raised with a message that is safe to show to the user."""
 
 
+class LoginError(DatabaseError):
+    """ID / phone do not match any client file."""
+
+
 class ValidationError(DatabaseError):
     """Invalid user input (ID, phone, name…). Caught wherever DatabaseError is caught."""
 
@@ -194,8 +198,28 @@ def _to_client(rec: dict) -> dict:
         "received": [{**r, "doc": _canon(r.get("doc", ""))}
                      for r in _parse_received(rec.get(C.COL_RECEIVED, ""))],
         "updated": rec.get(C.COL_UPDATED, ""),
+        "finalized": (rec.get(C.COL_FINALIZED, "")
+                      if _canon(rec.get(C.COL_STATUS, "")) == C.DONE else ""),
         "_row": rec["_row"],
     }
+
+
+# ───────────────────────────── client login ─────────────────────────────
+def _phone_digits(raw: str) -> str:
+    d = re.sub(r"\D", "", raw or "")
+    if d.startswith("972"):
+        d = "0" + d[3:]
+    return "0" + d if len(d) == 9 and d.startswith("5") else d
+
+
+def authenticate(raw_id: str, raw_phone: str) -> dict:
+    """Client login: ID and phone must both match the same file.
+    ValidationError = malformed input; LoginError = no match (same message for either field)."""
+    tz, phone = validate_id(raw_id), validate_phone(raw_phone)
+    c = get_client(tz, fresh=True)
+    if not c or not c["phone"] or _phone_digits(c["phone"]) != phone:
+        raise LoginError("הפרטים שהוזנו אינם תואמים לתיק. בדקו ונסו שוב, או פנו למשרד.")
+    return c
 
 
 # ───────────────────────────── reads ─────────────────────────────
@@ -262,7 +286,26 @@ def update_details(client_id: str, name: str, phone: str, business_type: str) ->
 def set_status(client_id: str, status: str) -> None:
     if status not in C.STATUSES:
         raise DatabaseError("סטטוס לא מוכר.")
-    _update(_must_get(client_id), {C.COL_STATUS: status})
+    if status == C.DONE:
+        raise DatabaseError("השלמת תיק מתבצעת רק באמצעות הכפתור ״אישור והשלמת תיק״.")
+    _update(_must_get(client_id), {C.COL_STATUS: status, C.COL_FINALIZED: ""})
+
+
+def finalize_client(client_id: str, approve_pending: bool = False) -> None:
+    """Office sign-off: every document is in and approved -> status 'Done' + timestamp."""
+    c = _must_get(client_id)
+    if c["missing"]:
+        raise DatabaseError(f"לא ניתן להשלים את התיק – עדיין חסרים {len(c['missing'])} מסמכים.")
+    if not c["received"]:
+        raise DatabaseError("לא ניתן להשלים תיק שאין בו מסמכים.")
+    pending = [r for r in c["received"] if not r.get("approved")]
+    if pending and not approve_pending:
+        raise DatabaseError(f"{len(pending)} מסמכים טרם אושרו. אשרו אותם, או סמנו "
+                            "״אשר גם את המסמכים הממתינים״.")
+    for r in c["received"]:
+        r["approved"] = True
+    _update(c, {C.COL_RECEIVED: json.dumps(c["received"], ensure_ascii=False),
+                C.COL_STATUS: C.DONE, C.COL_FINALIZED: _now()})
 
 
 def set_stage(client_id: str, stage: str, reset_documents: bool) -> None:

@@ -30,9 +30,9 @@ def require_login() -> None:
         st.error("לא הוגדרה סיסמת מנהל. הוסף password תחת [admin] ב-secrets.toml "
                  "(או הגדר משתנה סביבה ADMIN_PASSWORD).")
         st.stop()
-    st.title("כניסת רואה החשבון")
+    ui.header("כניסת רואה החשבון", "גישה למורשים בלבד")
     with st.form("login"):
-        pwd = st.text_input("סיסמה", type="password")
+        pwd = st.text_input("סיסמה", type="password", placeholder="הזינו את סיסמת המשרד")
         if st.form_submit_button("כניסה", type="primary"):
             if hmac.compare_digest(pwd.encode(), expected.encode()):
                 st.session_state["admin_ok"] = True
@@ -164,7 +164,7 @@ def table(rows: list[dict]) -> None:
 
 
 def list_view(clients: list[dict]) -> None:
-    st.title("לקוחות")
+    ui.header("ניהול לקוחות", "לוח בקרה לרואה החשבון")
     dashboard(clients)
     st.divider()
 
@@ -223,8 +223,8 @@ def detail_view(client_id: str) -> None:
 
         with st.expander("עריכת פרטים"):
             with st.form("edit_details"):
-                name = st.text_input("שם מלא", client["name"])
-                phone = st.text_input("טלפון", client["phone"])
+                name = st.text_input("שם מלא", client["name"], help="יש להזין שם פרטי ושם משפחה")
+                phone = st.text_input("טלפון", client["phone"], placeholder="0501234567", help="מספר נייד ישראלי בן 10 ספרות")
                 bt_opts = C.BUSINESS_TYPES + ([client["business_type"]]
                           if client["business_type"] not in C.BUSINESS_TYPES else [])
                 btype = st.selectbox("סוג עסק", bt_opts,
@@ -234,13 +234,16 @@ def detail_view(client_id: str) -> None:
                     run(db.update_details, client["id"], name, phone, btype)
 
         st.subheader("סטטוס")
-        idx = C.STATUSES.index(client["status"]) if client["status"] in C.STATUSES else 0
-        new_status = st.radio("סטטוס כללי", C.STATUSES, index=idx, horizontal=True,
-                              label_visibility="collapsed")
-        if new_status != client["status"]:
-            if new_status == C.DONE and client["missing"]:
-                st.warning(f"עדיין חסרים {len(client['missing'])} מסמכים.")
-            if st.button(f"עדכן ל“{new_status}”", type="primary"):
+        hold = [C.WAITING, C.REVIEW]
+        if client["status"] == C.DONE:
+            st.success("התיק הושלם ואושר סופית" + (f" ב-{client['finalized']}" if client["finalized"] else "") + ".")
+            if st.button("פתיחת התיק מחדש"):
+                run(db.set_status, client["id"], C.REVIEW, ok="התיק נפתח מחדש")
+        else:
+            new_status = st.radio("סטטוס התיק", hold, horizontal=True,
+                                  index=hold.index(client["status"]) if client["status"] in hold else 0,
+                                  help="השלמת התיק מתבצעת בכפתור ״אישור והשלמת תיק״ בתחתית אזור האימות.")
+            if new_status != client["status"] and st.button(f"עדכן ל“{new_status}”", type="primary"):
                 run(db.set_status, client["id"], new_status, ok="הסטטוס עודכן")
 
         st.subheader("שלב")
@@ -288,6 +291,22 @@ def detail_view(client_id: str) -> None:
         approved_n = sum(got.get(d, False) for d in required)
         st.progress(approved_n / len(required), text=f"אושרו {approved_n} מתוך {len(required)} מסמכים")
 
+    # ---- final sign-off by the office
+    st.markdown("#### אישור סופי של המשרד")
+    if client["status"] == C.DONE:
+        st.success("✅ התיק הושלם ואושר סופית" + (f" · {client['finalized']}" if client["finalized"] else ""))
+    else:
+        pending_n = sum(not r.get("approved") for r in client["received"])
+        if client["missing"]:
+            st.warning(f"אי אפשר להשלים את התיק – עדיין חסרים {len(client['missing'])} מסמכים.")
+        approve_all = pending_n > 0 and st.checkbox(
+            f"אשר גם את {pending_n} המסמכים שממתינים לאישור", key=f"apall_{client['id']}")
+        confirmed = st.checkbox("אני מאשר/ת שכל הפרטים והקבצים בתיק נבדקו ונמצאו תקינים",
+                                key=f"confirm_{client['id']}")
+        if st.button("✅ אישור והשלמת תיק", type="primary", use_container_width=True,
+                     disabled=not confirmed or bool(client["missing"])):
+            run(db.finalize_client, client["id"], approve_all, ok="התיק הושלם ואושר סופית 🎉")
+
     # ---- uploaded documents
     st.divider()
     st.subheader("מסמכים שהועלו")
@@ -317,8 +336,9 @@ def detail_view(client_id: str) -> None:
     options = client["missing"] + ["➕ מסמך אחר…"]
     with st.form("office_upload", clear_on_submit=True):
         choice = st.selectbox("עבור איזה מסמך?", options)
-        custom = st.text_input("שם המסמך (כשבוחרים ״מסמך אחר״)")
+        custom = st.text_input("שם המסמך (כשבוחרים ״מסמך אחר״)", placeholder="לדוגמה: אישור ניהול ספרים")
         files = st.file_uploader("בחר קבצים", accept_multiple_files=True,
+                                 help=f"קבצי תמונה או PDF, עד {storage.MAX_BYTES // 1024 // 1024} MB לכל קובץ",
                                  type=[e[1:] for e in sorted(storage.ALLOWED_EXT)])
         approve = st.checkbox("סמן כמאושר מיד", value=True)
         if st.form_submit_button("צרף קבצים", type="primary"):

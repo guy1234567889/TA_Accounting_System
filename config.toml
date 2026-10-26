@@ -2,8 +2,9 @@
 maxUploadSize = 15          # MB, per file
 
 [theme]
-primaryColor = "#1f5c4d"
-backgroundColor = "#ffffff"
-secondaryBackgroundColor = "#f1f4f2"
-textColor = "#1d2321"
+base = "light"
+primaryColor = "#12355b"            # deep navy – buttons, links, selection
+backgroundColor = "#f6f8fc"
+secondaryBackgroundColor = "#e9eef6"
+textColor = "#1b2a41"
 font = "sans serif"
