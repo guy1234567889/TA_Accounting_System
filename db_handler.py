@@ -134,8 +134,10 @@ def _connect():
             sheet_id = d.get("spreadsheet_id") or os.getenv("SPREADSHEET_ID")
             if not (client_id and client_secret and refresh_token and sheet_id):
                 raise DatabaseError("חסרים פרטי OAuth או spreadsheet_id ב-Secrets.")
+            # No `scopes=` here on purpose: the refresh token already carries the scopes it was
+            # granted, and asking for different ones makes Google answer "invalid_scope".
             creds = Credentials(token=None, refresh_token=refresh_token, client_id=client_id,
-                                client_secret=client_secret, scopes=SCOPES,
+                                client_secret=client_secret,
                                 token_uri="https://oauth2.googleapis.com/token")
             book = gspread.authorize(creds).open_by_key(sheet_id)
             tab = d.get("worksheet", "Clients")
