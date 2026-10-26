@@ -48,16 +48,18 @@ def login_screen() -> None:
         return
 
     with st.form("login"):
-        raw = st.text_input("מספר תעודת זהות", max_chars=12, placeholder="123456789")
+        raw = st.text_input("מספר תעודת זהות", max_chars=9, placeholder="9 ספרות")
         go = st.form_submit_button("המשך", type="primary")
     if not go:
         return
 
-    if not db.normalize_id(raw):
-        st.error("אנא הזן מספר זהות בן 5–9 ספרות.")
+    try:
+        tz = db.validate_id(raw)
+    except db.ValidationError as e:
+        st.error(str(e))
         return
     try:
-        client = db.get_client(raw, fresh=True)
+        client = db.get_client(tz, fresh=True)
     except db.DatabaseError:
         st.error("השירות אינו זמין כרגע. נסה שוב בעוד כמה דקות.")
         return
