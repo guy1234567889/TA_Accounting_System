@@ -42,8 +42,10 @@ def _split(text: str) -> list[str]:
     return [p.strip() for p in re.split(r"[,;\n]", text or "") if p.strip()]
 
 
+from zoneinfo import ZoneInfo
+
 def _now() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M")
+    return datetime.now(ZoneInfo("Asia/Jerusalem")).strftime("%Y-%m-%d %H:%M")
 
 
 def _canon(value: str) -> str:
