@@ -223,6 +223,7 @@ def detail_view(client_id: str) -> None:
 
         with st.expander("עריכת פרטים"):
             with st.form("edit_details"):
+                new_tz = st.text_input("תעודת זהות", value=client["id"], max_chars=9, placeholder="9 ספרות", help="תעודת זהות ישראלית תקינה, 9 ספרות כולל אפסים מובילים")
                 name = st.text_input("שם מלא", client["name"], help="יש להזין שם פרטי ושם משפחה")
                 phone = st.text_input("טלפון", client["phone"], placeholder="0501234567", help="מספר נייד ישראלי בן 10 ספרות")
                 bt_opts = C.BUSINESS_TYPES + ([client["business_type"]]
@@ -231,7 +232,20 @@ def detail_view(client_id: str) -> None:
                                      index=bt_opts.index(client["business_type"])
                                      if client["business_type"] in bt_opts else 0)
                 if st.form_submit_button("שמור פרטים"):
-                    run(db.update_details, client["id"], name, phone, btype)
+                    try:
+                        # בדיקה האם השתנתה הת״ז ועדכון בהתאם
+                        if new_tz.strip() != client["id"]:
+                            validated_new_tz = db.validate_id(new_tz)
+                            if db.get_client(validated_new_tz, fresh=True):
+                                raise db.DatabaseError("כבר קיים לקוח אחר עם תעודת זהות זו.")
+                            # יצירת שורה חדשה ומחיקת הישנה או עדכון מפתח
+                            db.update_client_id(client["id"], validated_new_tz)
+                            client["id"] = validated_new_tz
+                        db.update_details(client["id"], name, phone, btype)
+                        flash("הפרטים עודכנו בהצלחה")
+                        st.rerun()
+                    except (db.DatabaseError, ValueError) as e:
+                        st.error(str(e))
 
         st.subheader("סטטוס")
         hold = [C.WAITING, C.REVIEW]
