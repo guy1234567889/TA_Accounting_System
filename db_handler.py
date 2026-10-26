@@ -123,6 +123,13 @@ def is_mock() -> bool:
         return False
 
 
+def _grow(ws, needed_cols: int) -> None:
+    """Google Sheets rejects writes outside the grid, so widen it first when needed."""
+    have = getattr(ws, "col_count", None)          # the CSV demo worksheet has no grid limit
+    if have is not None and have < needed_cols:
+        ws.add_cols(needed_cols - have)
+
+
 @st.cache_resource(show_spinner=False)
 def _connect():
     """Open the worksheet once per server process, rename legacy English headers to Hebrew
@@ -157,6 +164,7 @@ def _connect():
             headers = renamed
         missing_cols = [c for c in C.COLUMNS if c not in headers]
         if missing_cols:                       # add any missing columns at the right edge
+            _grow(ws, len(headers) + len(missing_cols))
             ws.update(range_name=gspread.utils.rowcol_to_a1(1, len(headers) + 1),
                       values=[missing_cols], value_input_option="RAW")
             headers = headers + missing_cols
@@ -178,6 +186,7 @@ def _ensure_columns(ws, headers: list) -> None:
         current = ws.row_values(1)
         missing = [c for c in C.COLUMNS if c not in current]
         if missing:
+            _grow(ws, len(current) + len(missing))
             ws.update(range_name=gspread.utils.rowcol_to_a1(1, len(current) + 1),
                       values=[missing], value_input_option="RAW")
             current = current + missing
