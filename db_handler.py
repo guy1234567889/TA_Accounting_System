@@ -73,6 +73,7 @@ def get_all_clients(fresh=False):
                 "name": row[1],
                 "phone": row[2],
                 "btype": row[3],
+                "status": row[4],
                 "stage": row[4]
             })
         return clients
