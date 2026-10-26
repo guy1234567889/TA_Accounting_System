@@ -10,8 +10,9 @@ COL_STATUS = "סטטוס כללי"
 COL_MISSING = "מסמכים חסרים"      # comma-separated list
 COL_RECEIVED = "מסמכים שהתקבלו"    # JSON list (file paths + approval flag)
 COL_UPDATED = "עדכון אחרון"
+COL_FINALIZED = "אישור סופי"          # timestamp of the office's final sign-off
 COLUMNS = [COL_ID, COL_NAME, COL_PHONE, COL_BTYPE, COL_STAGE, COL_STATUS,
-           COL_MISSING, COL_RECEIVED, COL_UPDATED]
+           COL_MISSING, COL_RECEIVED, COL_UPDATED, COL_FINALIZED]
 
 # ---- Global status (traffic light)
 WAITING, REVIEW, DONE = "ממתין למסמכים", "בבדיקה", "הושלם"
@@ -52,3 +53,7 @@ HEADER_ALIASES = {
 
 # Israeli mobile prefixes accepted by phone validation (edit if a new carrier prefix appears)
 MOBILE_PREFIXES = ("050", "051", "052", "053", "054", "055", "056", "058", "059")
+
+# ---- Branding (shown in the banner of both apps)
+FIRM_NAME = "אריק טרבלסי - רואה חשבון"      # replace with your firm's name
+FIRM_PHONE = "0528858530"                     # optional, e.g. "09-1234567" – shown to clients for questions
