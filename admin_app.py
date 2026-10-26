@@ -1,7 +1,9 @@
 """Accountant dashboard – run with:  streamlit run admin_app.py"""
 import hmac
 import os
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
@@ -55,59 +57,131 @@ def run(fn, *args, ok: str = "נשמר") -> None:
 
 
 # ───────────────────────────── list view ─────────────────────────────
+STATUS_HEX = {C.WAITING: "#d64545", C.REVIEW: "#e0b01b", C.DONE: "#3d9a5b"}   # traffic light
+STAGE_HEX = ["#2f7d6d", "#5b7bd5", "#a0527c", "#8a8f98"]
+
+
 def row_colour(row: pd.Series) -> list[str]:
     """Traffic light: tint the whole row by Global Status."""
-    status = row["_status"]
-    bg, fg, *_ = C.STATUS_STYLE.get(status, ("", "", "", ""))
-    css = f"background-color: {bg}; color: {fg};" if bg else ""
-    return [css] * len(row)
+    bg, fg, *_ = C.STATUS_STYLE.get(row["_status"], ("", "", "", ""))
+    return [f"background-color: {bg}; color: {fg};" if bg else ""] * len(row)
 
 
-def list_view(clients: list[dict]) -> None:
-    st.title("לקוחות")
+def quarter_of(ts: str) -> str | None:
+    """'2026-10-21 19:48' -> '2026-Q4'."""
+    try:
+        d = datetime.strptime((ts or "")[:10], "%Y-%m-%d")
+    except ValueError:
+        return None
+    return f"{d.year}-Q{(d.month - 1) // 3 + 1}"
 
-    counts = {s: sum(c["status"] == s for c in clients) for s in C.STATUSES}
-    cols = st.columns(len(C.STATUSES) + 1)
-    cols[0].metric("כל הלקוחות", len(clients))
-    for col, s in zip(cols[1:], C.STATUSES):
-        col.metric(f"{C.STATUS_STYLE[s][2]} {s}", counts[s])
 
-    f1, f2, f3 = st.columns([2, 1, 1])
-    query = f1.text_input("חיפוש לפי שם, ת״ז או טלפון", placeholder="הקלד לחיפוש…")
-    status_f = f2.multiselect("סטטוס", C.STATUSES)
-    stage_f = f3.multiselect("שלב", C.STAGES)
+def quarter_label(q: str) -> str:
+    year, n = q.split("-Q")
+    return f"רבעון {n} · {year}"
 
-    rows = []
-    for c in clients:
-        hay = f"{c['name']} {c['id']} {c['phone']}".lower()
-        if query and query.lower().strip() not in hay:
-            continue
-        if status_f and c["status"] not in status_f:
-            continue
-        if stage_f and c["stage"] not in stage_f:
-            continue
-        rows.append({"ת״ז": c["id"], "שם מלא": c["name"], "טלפון": c["phone"],
-                     "סוג עסק": c["business_type"], "שלב": c["stage"],
-                     "סטטוס": f"{C.STATUS_STYLE.get(c['status'], ('', '', '⚪'))[2]} {c['status']}",
-                     "חסרים": ", ".join(c["missing"]) or "—",
-                     "עודכן": c["updated"], "_status": c["status"]})
 
-    if not rows:
-        st.info("לא נמצאו לקוחות. שנה את הסינון או הוסף לקוח מהתפריט הצדדי.")
+def pie(counts: dict[str, int], colours: list[str]) -> None:
+    data = pd.DataFrame({"label": list(counts), "count": list(counts.values())})
+    if data["count"].sum() == 0:
+        st.info("אין עדיין נתונים להצגה.")
         return
+    st.vega_lite_chart(data[data["count"] > 0], {
+        "mark": {"type": "arc", "innerRadius": 55},
+        "encoding": {
+            "theta": {"field": "count", "type": "quantitative"},
+            "color": {"field": "label", "type": "nominal",
+                      "scale": {"domain": list(counts), "range": colours},
+                      "legend": {"orient": "bottom", "title": None}},
+            "tooltip": [{"field": "label", "title": "קטגוריה"},
+                        {"field": "count", "title": "לקוחות"}]}},
+        use_container_width=True)
 
-    view = pd.DataFrame(rows).reset_index(drop=True)
-    styled = view.style.apply(row_colour, axis=1)
+
+def dashboard(clients: list[dict]) -> None:
+    st.subheader("דשבורד")
+    total = len(clients)
+    by_status = {s: sum(c["status"] == s for c in clients) for s in C.STATUSES}
+
+    this_q = quarter_of(datetime.now(ZoneInfo("Asia/Jerusalem")).strftime("%Y-%m-%d"))
+    quarters = sorted({quarter_of(c["updated"]) for c in clients} - {None} | {this_q}, reverse=True)
+    q = st.selectbox("רבעון לדיווח", quarters, format_func=quarter_label)
+    finished_q = sum(1 for c in clients if c["status"] in (C.REVIEW, C.DONE)
+                     and not c["missing"] and quarter_of(c["updated"]) == q)
+
+    top = st.columns(2)
+    top[0].metric("סה״כ לקוחות", total)
+    top[1].metric("סיימו להעלות הכול ברבעון", finished_q,
+                  help="לקוחות ללא מסמכים חסרים שעודכנו לאחרונה ברבעון שנבחר")
+    for col, s in zip(st.columns(len(C.STATUSES)), C.STATUSES):
+        pct = f"{by_status[s] / total:.0%}" if total else "0%"
+        col.metric(f"{C.STATUS_STYLE[s][2]} {s}", by_status[s], pct, delta_color="off")
+
+    by = st.radio("פילוח לפי", ["סטטוס", "שלב"], horizontal=True)
+    if by == "סטטוס":
+        pie(by_status, [STATUS_HEX[s] for s in C.STATUSES])
+    else:
+        stages = {s: sum(c["stage"] == s for c in clients) for s in C.STAGES}
+        if total - sum(stages.values()):
+            stages["אחר"] = total - sum(stages.values())
+        pie(stages, STAGE_HEX[:len(stages)])
+
+
+def cards(rows: list[dict]) -> None:
+    """Mobile-friendly list: one tappable card per client."""
+    limit = st.session_state.get("card_limit", 30)
+    for c in rows[:limit]:
+        _, _, emoji, colour = C.STATUS_STYLE.get(c["status"], ("", "", "⚪", "gray"))
+        with st.container(border=True):
+            st.markdown(f"**{c['name']}** · ת״ז {c['id']}\n\n"
+                        f"{emoji} :{colour}[**{c['status']}**] · {c['stage'] or '—'}\n\n"
+                        f"📞 {db.format_phone(c['phone']) or '—'} · "
+                        f"חסרים: {', '.join(c['missing']) or '—'}")
+            if st.button("פתח כרטיס", key=f"open_{c['id']}", use_container_width=True):
+                st.session_state["selected"] = c["id"]
+                st.rerun()
+    if len(rows) > limit and st.button(f"הצג עוד ({len(rows) - limit})"):
+        st.session_state["card_limit"] = limit + 30
+        st.rerun()
+
+
+def table(rows: list[dict]) -> None:
+    view = pd.DataFrame([
+        {"ת״ז": c["id"], "שם מלא": c["name"], "טלפון": c["phone"], "סוג עסק": c["business_type"],
+         "שלב": c["stage"],
+         "סטטוס": f"{C.STATUS_STYLE.get(c['status'], ('', '', '⚪'))[2]} {c['status']}",
+         "חסרים": ", ".join(c["missing"]) or "—", "עודכן": c["updated"], "_status": c["status"]}
+        for c in rows]).reset_index(drop=True)
     st.caption("בחר שורה כדי לפתוח את כרטיס הלקוח.")
     event = st.dataframe(
-        styled, hide_index=True, use_container_width=True,
+        view.style.apply(row_colour, axis=1), hide_index=True, use_container_width=True,
         on_select="rerun", selection_mode="single-row",
-        column_order=["ת״ז", "שם מלא", "טלפון", "סוג עסק", "שלב", "סטטוס",
-                      "חסרים", "עודכן"],
+        column_order=["ת״ז", "שם מלא", "טלפון", "סוג עסק", "שלב", "סטטוס", "חסרים", "עודכן"],
         key=f"table_{st.session_state.get('table_nonce', 0)}")
     if event.selection.rows:
         st.session_state["selected"] = view.iloc[event.selection.rows[0]]["ת״ז"]
         st.rerun()
+
+
+def list_view(clients: list[dict]) -> None:
+    st.title("לקוחות")
+    dashboard(clients)
+    st.divider()
+
+    query = st.text_input("חיפוש לפי שם, ת״ז או טלפון", placeholder="הקלד לחיפוש…")
+    with st.expander("סינון נוסף"):
+        status_f = st.multiselect("סטטוס", C.STATUSES)
+        stage_f = st.multiselect("שלב", C.STAGES)
+    rows = [c for c in clients
+            if (not query or query.lower().strip() in f"{c['name']} {c['id']} {c['phone']}".lower())
+            and (not status_f or c["status"] in status_f)
+            and (not stage_f or c["stage"] in stage_f)]
+    if not rows:
+        st.info("לא נמצאו לקוחות. שנה את הסינון או הוסף לקוח מהתפריט הצדדי.")
+        return
+    mode = st.radio("תצוגה", ["כרטיסים", "טבלה"], horizontal=True)
+    st.caption(f"{len(rows)} לקוחות")
+    (cards if mode == "כרטיסים" else table)(rows)
 
 
 # ───────────────────────────── drill-down ─────────────────────────────
@@ -191,6 +265,29 @@ def detail_view(client_id: str) -> None:
             if st.form_submit_button("שלח בקשה"):
                 run(db.request_document, client["id"], extra, ok="המסמך התבקש")
 
+    # ---- verification against the client
+    st.divider()
+    st.subheader("אימות מול הלקוח")
+    v1, v2 = st.columns(2)
+    v1.write("✅ ת״ז תקינה" if db.is_valid_israeli_id(client["id"])
+             else "⚠️ ת״ז לא עוברת בדיקת ספרת ביקורת")
+    try:
+        db.validate_phone(client["phone"])
+        v2.write("✅ טלפון תקין")
+    except db.ValidationError:
+        v2.write("⚠️ הטלפון אינו תקין – מומלץ לעדכן")
+    got = {}
+    for rec in client["received"]:
+        got[rec["doc"]] = got.get(rec["doc"], False) or bool(rec.get("approved"))
+    required = list(dict.fromkeys(C.STAGE_DOCUMENTS.get(client["stage"], [])
+                                  + list(got) + client["missing"]))
+    for doc in required:
+        st.write(f"{'🔴 חסר' if doc not in got else '✅ אושר' if got[doc] else '⏳ התקבל – ממתין לאישור'}"
+                 f" — {doc}")
+    if required:
+        approved_n = sum(got.get(d, False) for d in required)
+        st.progress(approved_n / len(required), text=f"אושרו {approved_n} מתוך {len(required)} מסמכים")
+
     # ---- uploaded documents
     st.divider()
     st.subheader("מסמכים שהועלו")
@@ -198,7 +295,7 @@ def detail_view(client_id: str) -> None:
         st.info("הלקוח עדיין לא העלה מסמכים.")
     for i, rec in enumerate(client["received"]):
         mark = "✅ אושר" if rec.get("approved") else "⏳ ממתין לבדיקה"
-        with st.expander(f"{rec['doc']} — {mark} — התקבל {rec.get('time', '')}",
+        with st.expander(f"{rec['doc']} — {mark} — התקבל {rec.get('time', '')}{' · 🏢 צורף ע״י המשרד' if rec.get('source') == 'office' else ''}",
                          expanded=not rec.get("approved")):
             for j, path in enumerate(rec.get("files", [])):
                 show_file(path, f"{rec['doc']} (עמוד {j + 1})", f"dl_{i}_{j}")
@@ -214,6 +311,21 @@ def detail_view(client_id: str) -> None:
                     ok=f"{rec['doc']} הוחזר ללקוח")
 
 
+    # ---- attach files from the office
+    st.divider()
+    st.subheader("צירוף קבצים מטעם המשרד")
+    options = client["missing"] + ["➕ מסמך אחר…"]
+    with st.form("office_upload", clear_on_submit=True):
+        choice = st.selectbox("עבור איזה מסמך?", options)
+        custom = st.text_input("שם המסמך (כשבוחרים ״מסמך אחר״)")
+        files = st.file_uploader("בחר קבצים", accept_multiple_files=True,
+                                 type=[e[1:] for e in sorted(storage.ALLOWED_EXT)])
+        approve = st.checkbox("סמן כמאושר מיד", value=True)
+        if st.form_submit_button("צרף קבצים", type="primary"):
+            run(db.attach_office_files, client["id"], custom if choice == options[-1] else choice,
+                [(f.name, f.getvalue()) for f in files or []], approve, ok="הקבצים צורפו")
+
+
 # ───────────────────────────── sidebar ─────────────────────────────
 def sidebar() -> None:
     with st.sidebar:
@@ -227,21 +339,19 @@ def sidebar() -> None:
             ok, msg = storage.check_backend()
             (st.success if ok else st.error)(msg)
         with st.expander("הוספת לקוח"):
-            with st.form("add_client", clear_on_submit=True):
-                tz = st.text_input("ת״ז")
-                name = st.text_input("שם מלא")
-                phone = st.text_input("טלפון")
+            with st.form(f"add_client_{st.session_state.get('add_n', 0)}"):
+                tz = st.text_input("ת״ז", max_chars=9, placeholder="9 ספרות", help="תעודת זהות ישראלית תקינה, 9 ספרות כולל אפסים מובילים")
+                name = st.text_input("שם מלא", placeholder="שם פרטי ושם משפחה")
+                phone = st.text_input("טלפון", max_chars=15, placeholder="0501234567")
                 btype = st.selectbox("סוג עסק", C.BUSINESS_TYPES)
                 stage = st.selectbox("שלב התחלתי", C.STAGES)
                 if st.form_submit_button("הוסף לקוח", type="primary"):
-                    norm = db.normalize_id(tz)
-                    if norm and not db.is_valid_israeli_id(norm):
-                        st.warning("ספרת הביקורת של הת״ז נראית שגויה – הלקוח יישמר, אנא ודא את המספר.")
                     try:
                         db.add_client(tz, name, phone, btype, stage)
                     except db.DatabaseError as e:
                         st.error(str(e))
                     else:
+                        st.session_state["add_n"] = st.session_state.get("add_n", 0) + 1
                         flash("הלקוח נוסף")
                         st.rerun()
         if st.button("יציאה"):
